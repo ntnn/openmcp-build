@@ -22,6 +22,9 @@ on:
       app_private_key:
         description: 'GitHub App private key for creating a GitHub App token.'
         required: false
+      signing_key:
+        description: 'Optional RSA private key (or the path to one) used to sign the published images with cosign. Publishing is unsigned when it is not set.'
+        required: false
   
 permissions:
   packages: write
@@ -106,6 +109,7 @@ jobs:
           task build:img:all --verbose
         env:
           FIPS: ${{ inputs.fips }}
+          SIGNING_KEY: ${{ secrets.signing_key }}
 
       - name: Verify FIPS compliance
         if: ${{ inputs.fips }}
