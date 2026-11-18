@@ -103,11 +103,14 @@ Since the imported Taskfile is generic, there are a few variables that need to b
   - When set to `false`, a standard static (`CGO_ENABLED=0`) binary is built and packaged onto a distroless runtime image (`Dockerfile.nonfips`), and `build:img:verify-fips` is skipped.
   - This is set as an environment variable, e.g. `FIPS=false task build:img:all`. In CI, the `publish.lib.yaml` reusable workflow exposes a matching `fips` input (see below).
 - `SIGNING_KEY`
-  - The RSA private key used to sign the published container images, either the key itself or the path of a file holding it.
-  - If unset images are published unchanged.
+  - The RSA private key used to sign the published container images and the OCM component version, either the key itself or the path of a file holding it.
+  - If unset artifacts are published unchanged.
   - See [Artifact Signing](#artifact-signing) below.
 - `SIGN`
-  - Set to `false` to disable signing even when `SIGNING_KEY` is available, e.g. to re-run a publish job without signing.
+  - Set to `false` to disable signing even when `SIGNING_KEY` is available.
+  - Also an environment variable.
+- `SIGNING_NAME`
+  - Name of the signature on the OCM component version.
   - Also an environment variable.
 
 There are two main Taskfiles, one of which should be included:
@@ -225,7 +228,7 @@ This repository provides reusable GitHub Actions workflows that can be called fr
 | Workflow | Purpose |
 |---|---|
 | `ci.lib.yaml` | Runs code generation, validation, and tests |
-| `publish.lib.yaml` | Builds and publishes images, charts, and OCM components. Accepts a `fips` input (default `true`); set it to `false` to build non-FIPS images and skip FIPS verification. Set the optional `signing_key` secret to sign the published images (see [Artifact Signing](#artifact-signing)). |
+| `publish.lib.yaml` | Builds and publishes images, charts, and OCM components. Accepts a `fips` input (default `true`); set it to `false` to build non-FIPS images and skip FIPS verification. Set the optional `signing_key` secret to sign the published images and the OCM component version, and the optional `signature_name` input to override the component version signature name (see [Artifact Signing](#artifact-signing)). |
 | `release.lib.yaml` | Creates releases and tags |
 | `renovate-generate.lib.yaml` | Runs `task generate` on Renovate branches and commits the result |
 | `homebrew.lib.yaml` | Makes the binary available via a custom homebrew tap (CLI variant only) |
@@ -303,12 +306,14 @@ TABLE HERE
 
 ## Artifact Signing
 
-Published container images can be signed with [cosign](https://github.com/sigstore/cosign).
-Artifacts are signed automatically when a signing key is available.
+Published container images can be signed with [cosign](https://github.com/sigstore/cosign), the OCM component version with `ocm sign`.
+Artifacts are signed automatically when a signing key is available. One key signs both.
 
 ### What is signed
 
 Each component's multi-platform manifest (`<image-registry>/<component>:<version>`), addressed by its digest - the reference that the OCM component version points at. `task build:img:all` signs after pushing and verifies what it signed.
+
+The OCM component version. `task build:ocm:all` signs it in the local transport archive before pushing, so the signature covers the local resources and the digests of the referenced images and charts, then verifies the signature in the registry.
 
 ### Enabling it
 
@@ -316,13 +321,14 @@ Each component's multi-platform manifest (`<image-registry>/<component>:<version
 |---|---|
 | `SIGNING_KEY` | RSA private key, either the key itself or the path of a file holding it. A value that names an existing file is read as a path, anything else as the key itself. |
 | `SIGN` | `false` disables signing even when `SIGNING_KEY` is set. |
+| `SIGNING_NAME` | Name of the component version signature, `openmcp-project` unless set. Consumers must verify with the same name. |
 
 ```sh
 openssl genrsa -out signing.key 4096
 openssl pkey -in signing.key -pubout -out signing.pub   # publish this part
 ```
 
-In CI, set the `signing_key` secret of the publishing repository; `publish.lib.yaml` hands it to the image build step as `SIGNING_KEY`. Without the secret the workflow publishes unsigned images. Signing authenticates to the registry with the same docker configuration as pushing, so no additional credentials are involved.
+In CI, set the `signing_key` secret of the publishing repository; `publish.lib.yaml` hands it to the image and component build steps as `SIGNING_KEY`, and its `signature_name` input as `SIGNING_NAME`. Without the secret the workflow publishes unsigned artifacts. Signing authenticates to the registry with the same docker configuration as pushing, so no additional credentials are involved.
 
 ### Verifying an image
 
@@ -334,6 +340,17 @@ cosign tree "$IMG@$DIG"
 ```
 
 `cosign tree` lists the signature artifacts that refer to the image; `cosign verify` prints the verified image manifest claims.
+
+### Verifying a component version
+
+```sh
+ocm verify componentversions --signature openmcp-project --public-key signing.pub \
+  ghcr.io/openmcp-project/components//<go module>:<version>
+```
+
+### Republishing a signed version
+
+Every build of a component version gets a new digest, because its creation time is part of what is signed. Publishing a version again with the key signs it again. Publishing it again **without** the key leaves the old signature on a component version it no longer matches, and verification fails until the version is published with the key once more.
 
 ## Documentation Generation
 
