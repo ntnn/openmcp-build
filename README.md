@@ -102,6 +102,13 @@ Since the imported Taskfile is generic, there are a few variables that need to b
     `build:img:verify-fips` checks compliance.
   - When set to `false`, a standard static (`CGO_ENABLED=0`) binary is built and packaged onto a distroless runtime image (`Dockerfile.nonfips`), and `build:img:verify-fips` is skipped.
   - This is set as an environment variable, e.g. `FIPS=false task build:img:all`. In CI, the `publish.lib.yaml` reusable workflow exposes a matching `fips` input (see below).
+- `SIGNING_KEY`
+  - The RSA private key used to sign the published container images, either the key itself or the path of a file holding it.
+  - If unset images are published unchanged.
+  - See [Artifact Signing](#artifact-signing) below.
+- `SIGN`
+  - Set to `false` to disable signing even when `SIGNING_KEY` is available, e.g. to re-run a publish job without signing.
+  - Also an environment variable.
 
 There are two main Taskfiles, one of which should be included:
 - `Taskfile_controller.yaml` is meant for operator repositories and contains task definitions for code generation and validation, binary builds, and image builds.
@@ -218,7 +225,7 @@ This repository provides reusable GitHub Actions workflows that can be called fr
 | Workflow | Purpose |
 |---|---|
 | `ci.lib.yaml` | Runs code generation, validation, and tests |
-| `publish.lib.yaml` | Builds and publishes images, charts, and OCM components. Accepts a `fips` input (default `true`); set it to `false` to build non-FIPS images and skip FIPS verification. |
+| `publish.lib.yaml` | Builds and publishes images, charts, and OCM components. Accepts a `fips` input (default `true`); set it to `false` to build non-FIPS images and skip FIPS verification. Set the optional `signing_key` secret to sign the published images (see [Artifact Signing](#artifact-signing)). |
 | `release.lib.yaml` | Creates releases and tags |
 | `renovate-generate.lib.yaml` | Runs `task generate` on Renovate branches and commits the result |
 | `homebrew.lib.yaml` | Makes the binary available via a custom homebrew tap (CLI variant only) |
@@ -293,6 +300,40 @@ TABLE HERE
 > For some reason, the action computes the table _before_ adding the calling repo's formula and it fails if there are no formulae within the tap, which means
 >   - table generation must be disabled for the first run, if the homebrew tap repo does not have any formulae yet
 >   - when a new formula is added, it will only appear in the table when the workflow is run again _after_ the run that added the new formula
+
+## Artifact Signing
+
+Published container images can be signed with [cosign](https://github.com/sigstore/cosign).
+Artifacts are signed automatically when a signing key is available.
+
+### What is signed
+
+Each component's multi-platform manifest (`<image-registry>/<component>:<version>`), addressed by its digest - the reference that the OCM component version points at. `task build:img:all` signs after pushing and verifies what it signed.
+
+### Enabling it
+
+| Variable | Purpose |
+|---|---|
+| `SIGNING_KEY` | RSA private key, either the key itself or the path of a file holding it. A value that names an existing file is read as a path, anything else as the key itself. |
+| `SIGN` | `false` disables signing even when `SIGNING_KEY` is set. |
+
+```sh
+openssl genrsa -out signing.key 4096
+openssl pkey -in signing.key -pubout -out signing.pub   # publish this part
+```
+
+In CI, set the `signing_key` secret of the publishing repository; `publish.lib.yaml` hands it to the image build step as `SIGNING_KEY`. Without the secret the workflow publishes unsigned images. Signing authenticates to the registry with the same docker configuration as pushing, so no additional credentials are involved.
+
+### Verifying an image
+
+```sh
+IMG=ghcr.io/openmcp-project/images/<component>:<version>
+DIG=$(docker buildx imagetools inspect "$IMG" --format '{{.Manifest.Digest}}')
+cosign verify --key signing.pub "$IMG@$DIG"
+cosign tree "$IMG@$DIG"
+```
+
+`cosign tree` lists the signature artifacts that refer to the image; `cosign verify` prints the verified image manifest claims.
 
 ## Documentation Generation
 
