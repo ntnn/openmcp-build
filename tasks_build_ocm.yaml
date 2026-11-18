@@ -41,6 +41,10 @@ tasks:
         sh: 'PROJECT_ROOT="{{.ROOT_DIR2}}" {{.TASKFILE_DIR2}}/get-registry.sh --image'
       COMMIT:
         sh: '( cd "{{.ROOT_DIR2}}"; git rev-parse HEAD )'
+      # Components whose SBOMs were written by 'signing.sh sign-images'. signing.sh also fails
+      # the build when signing is on but a component's SBOMs are missing.
+      sbom_components:
+        sh: 'SBOM="{{.SBOM}}" SBOM_DIR="{{.SBOM_DIR}}" "{{.TASKFILE_DIR2}}/signing.sh" sbom-components {{ if .IMG_COMPONENTS }}{{.IMG_COMPONENTS | replace "," " "}}{{ else }}{{.COMPONENTS}}{{ end }}'
       compdir: '{{.LOCALTMP}}/component'
     cmds:
     - |
@@ -60,7 +64,9 @@ tasks:
         IMG_COMPONENTS="{{.IMG_COMPONENTS | default ""}}" \
         CRDS_COMPONENTS="{{.CRDS_COMPONENTS | default "[]"}}" \
         CRDS_VERSION="{{.CRDS_VERSION | default ""}}" \
-        CRDS_PATH="{{.CRDS_PATH | default ""}}"
+        CRDS_PATH="{{.CRDS_PATH | default ""}}" \
+        SBOM_COMPONENTS="{{.sbom_components}}" \
+        SBOM_PATH="{{.SBOM_DIR}}"
     - cmd: echo "Use '$(realpath --relative-base="{{.USER_WORKING_DIR}}" "{{.OCM}}") get cv $(realpath --relative-base="{{.USER_WORKING_DIR}}" "{{.compdir}}") -o yaml' to view the generated component descriptor."
       silent: true
 

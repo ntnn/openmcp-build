@@ -230,11 +230,14 @@ tasks:
     internal: true
 
   sign-multi:
-    desc: "  Sign the multi-platform images with cosign. Images must have been pushed before."
+    desc: "  Sign the multi-platform images with cosign and attach their SBOMs."
     summary: |
       Signs each component's multi-platform manifest by its digest and verifies the
       signature against the public key derived from the signing key. Images that already
       carry a signature from this key are left alone.
+      Then scans each signed image with syft, writes a CycloneDX and an SPDX document to
+      SBOM_DIR, attaches both to the image as cosign attestations, and verifies them.
+      Set SBOM=false to sign without generating SBOMs.
       Requires SIGNING_KEY, either the RSA private key itself or the path to one.
       Without a signing key, or with SIGN=false, the task does nothing.
     run: once
@@ -251,9 +254,14 @@ tasks:
     env:
       SIGN: '{{.SIGN}}'
       SIGNING_KEY: '{{.SIGNING_KEY}}'
-      SIGNING_CERT: '{{.SIGNING_CERT}}'
       COSIGN: '{{.COSIGN}}'
+      SBOM: '{{.SBOM}}'
+      SBOM_DIR: '{{.SBOM_DIR}}'
+      SYFT: '{{.SYFT}}'
     cmds:
+    # signing.sh needs syft only when it generates SBOMs, so the install is not unconditional.
+    - task: tools:syft
+      if: '{{ eq .SBOM "true" }}'
     - '"{{.TASKFILE_DIR2}}/signing.sh" sign-images "{{.IMAGE_BASE}}" "{{.VERSION}}" {{.COMPONENTS}}'
 
   verify-fips:
